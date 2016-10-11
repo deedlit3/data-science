@@ -1,0 +1,483 @@
+---
+title: "Lending Club Capstone Final"
+author: "Minh Truong"
+date: "October 1, 2016"
+output:
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+---
+##Lending Club (LC)
+Lending Club is a new Peer2Peer Platform that connects lenders with borrowers 
+(think Kickstarter for personal loans). LC uses an algorithm model to decide on the risk level or interest rate borrowers need to be charged lenders. Rates are made to be easy to apply and lending club charges a fee to finance for borrowers and charges lender's fees for the services rendered. 
+
+*PROBLEM:*
+
+http://www.bloomberg.com/news/features/2016-08-18/how-lending-club-s-biggest-fanboy-uncovered-shady-loans
+
+*Recently there has been a scandal where some borrowers may be the same borrowers and some anomalies were found. 
+*Stock price has lost 2/3 of its value $15 to $5 almost overnight.
+
+*TLDR; BAD LOANS ARE AFFECTING the STOCK PRICE AND PROFITABILITY LENDING CLUB*
+
+
+*ISSUES/CHALLENGES:*
+
+
+1) Can bad loans be identified before being accepted into the system? 
+2) What are the characteristics of a bad loan? Are there tell-tail signs?
+3) What are the short/long term strategies after successful identifying?
+4) What are other potential areas to improve or look at?
+5) Are there are interesting or weird issues?
+
+*FINDINGS:*
+
+1) YES it is possible to make a bad loans model that can identify bad loans.
+2) We are looking for any patterns, unusual clumping or clues on why it won't look like a normal healthy population distribution. 
+3) Implement ways to mitigate short term risks with accelerated payment inventives with longer term strategy to uncover hidden risks that look safe.
+4) Can look at ways to run a linear regression on the top variables to improve bad loans model
+5) Originally I was expecting the types of variables that would signal being unable to pay like credit inquiries, delinquencies, income, interest rates but what I found were variables that seem to signify people who would be a great credit risk but but had hidden circumstances that may or may not show up in the data directly and if they showed it would be indirect proof.
+
+
+*DATA:*
+
+URL: https://www.lendingclub.com/info/download-data.action
+
+The dataset is HUGE 421k loans and 115 possible variables/features not counting features we can add
+
+Since it is very time consuming to try all the combinations and nor do we want to build a model with too many variables as it will make the model unnecessarily complicated and the danger of overfitting the data.
+
+Issue with overfitting would mean it explains the current data set but has poor predictability for new datasets.
+
+Also since we have many observations and many variables the strategy will best to take advantage of what is available and try to extract as much value thats existing before trying anything too fancy.
+
+
+STARTING WITH THE USUAL CUPRITS THAT MAY FIT (Who are the ones that we need to get?)
+
+
+*Keep in mind most households have 15K in credit card debt, with many with auto loans, mortgages, student loans and other debt*
+
+So It isn't unusual to borrow money but the clue is to if certain characteristics are overweighted that shouldnt be.
+
+Some easy ones that come to mind are low income type loans, or high interest type loans, or people who carry an unusual balance loads/acconts or flags like credit inquires or past delinquencies that signal I may not pay.
+
+```{r Charts and Visualization}
+suppressWarnings(suppressMessages(library(ggplot2)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(tidyr)))
+suppressWarnings(suppressMessages(library(lubridate)))
+suppressWarnings(suppressMessages(library(caTools)))
+suppressWarnings(suppressMessages(library(ROCR)))
+suppressWarnings(suppressMessages(library(pROC)))
+
+LC <- read.csv("LoanStats3d_securev1.csv")
+summary(LC$loan_status)
+
+#Top reason many will say why they couldnt pay is "I don't make enough money", but #looking at the data set, there doesnt seem to be any huge defaults on the low end nor #the high end. Looking at the distribution quartiles, they look like income low or high #they default/charge off equally as likely, next most likely may be the interest rate, #"I got charged too much! Lets take a look."*
+
+annual <- subset(LC,select = c("loan_status","annual_inc") )
+annual_2 <- subset(annual, loan_status == "Charged Off")
+ggplot(annual_2, aes (x = annual_inc, y =loan_status ))+geom_count()
+summary(annual_2)
+
+
+#Interest Rate seems like a good starting point, but doesn't seem to be a pattern, #there doesn't seem to be any unusual weights anywhere and seems fairly distributed #around. Lets see if having a job is the reason!
+  
+int_rate.loan_status <- subset(LC,select = c("loan_status","int_rate") )
+ggplot(int_rate.loan_status, aes( x= int_rate, y = loan_status))+ geom_count()
+
+#Looks like employment length have alot of defaults with those @ 10+ Years, which is #unusual as those who are employed the longest tend to be responsible and consistent #or else they wouldnt be employed for so long. So this may be a clue on why. Lets see #if there are any delinquencies or credit inquiries.
+  
+emp_length <- subset(LC,select= c("loan_status","emp_length") )
+emp_length_3 <- subset(emp_length, loan_status == "Charged Off")
+emp_length_3 <- subset(emp_length, loan_status == "Charged Off")
+ggplot(emp_length_3,aes(x= emp_length )) + geom_bar()
+
+# Looks like an unusual of charge offs at 0 or 1 inquiries meaning most of the people #had few credit card binge opening, maybe they didnt open any new credit lines but  #started to fall behind the ones they already have open. Lets find out!
+
+inq_6mths <- subset(LC,select = c("loan_status","inq_last_6mths") )
+inq_6mths_2 <- subset(inq_6mths, loan_status == "Charged Off")
+ggplot(inq_6mths_2, aes (x = inq_last_6mths, y =loan_status ))+geom_count()
+
+#So there's a very slight pattern of people with low to no delinquencies but very minor # you can argue it is no pattern as its so slight as many pay off their loans have no 
+# delinquencies but can be a potential wolf in sheets clothing. Maybe its the housing #costs as typically rent or living costs take up to 30-50% of our income!
+
+delinq <- subset(LC,select = c("loan_status","delinq_2yrs") )
+ggplot(delinq, aes (x = delinq_2yrs, y =loan_status ))+geom_count()  
+  
+# See no trends here for homeownership, rent or own or in current mortgage. Maybe its #the reason why they borrowed!
+ 
+homeown <- subset(LC,select = c("loan_status","home_ownership") )
+ plot(homeown)
+ 
+# Looking here I see a ton of credit card and debt consolidation as the biggest reasons # why people are borrowing.
+
+ purpose <- subset(LC,select = c("loan_status","purpose") )
+purpose_2 <- subset(purpose, loan_status == "Charged Off")
+ggplot(purpose_2, aes (x = purpose, y =loan_status ))+geom_count() 
+summary(purpose_2)
+
+#So what have we learned so far?
+
+#Income/home ownership/ interest rates seem to have no patterns
+#Employment lengths/credit inquiried/delinquencies are long on the job but low on the #potential risk of default as none have triggered so far.
+
+#Seems to me so far all the data points to seemingly healthy profile digging a bit more #based on these characteristics, leads me to look for other areas of seemingly healthy #loan profiles like Payments!
+
+#the more payments made, less likely to charge off it looks like. So despite seemingly #healthy profiles people have trouble paying. Is it maybe they are sick? reckless?
+
+total_payment <- subset(LC,select = c ("total_pymnt","loan_status") )
+total_payment_2 <- subset(total_payment, loan_status == "Charged Off" )
+ggplot(total_payment_2, aes(x= total_pymnt, y= loan_status) ) + geom_count()
+
+#medical collections seems most are healthy but things maybe happening behind closed #doors
+
+med_coll_12mth <- subset(LC, select = c("loan_status","collections_12_mths_ex_med"))
+med_coll_12mth_2 <- subset(med_coll_12mth, loan_status == "Charged Off" )
+ggplot(med_coll_12mth_2, aes(x= collections_12_mths_ex_med, y= loan_status) ) + geom_count()
+
+#a Rechlace person may borrow alot for as long as possible but most are short term #loans 36 months *
+
+term <- subset(LC, select = c("loan_status", "term"))
+term_2 <- subset(term, loan_status == "Charged Off")
+ggplot(term_2, aes(x= term, y= loan_status) ) + geom_count()
+
+#revolv bal seems low too but this doesnt make sense why.
+
+rev_bal <- subset(LC, select = c ("revol_bal", "loan_status"))
+rev_bal_2 <- subset(rev_bal, loan_status == "Charged Off")
+ggplot(rev_bal_2, aes(x= revol_bal, y= loan_status) ) + geom_count()
+
+#open accounts open arent unusually high either, it is healthy to have 5-20 credit #accounts open for a typical household between store cards, credit cards and other #likes like auto, student, mortgage
+
+open_accounts <- subset(LC, select = c ("loan_status", "open_acc"))
+open_accounts_2 <- subset(open_accounts, loan_status == "Charged Off")
+ggplot(open_accounts_2, aes(x= open_acc, y= loan_status) ) + geom_count()
+
+
+#grade looks like a normal bell curve and not because LC allowed many high risk #profiles according to their algorithms
+
+grade <- subset(LC, select = c ("loan_status", "sub_grade"))
+grade_2 <- subset(grade, loan_status == "Charged Off" )
+ggplot(grade_2, aes(x= sub_grade, y= loan_status) ) + geom_count()
+```
+WHAT DOES OUR BAD LOAN CULPRIT STARTING TO LOOK LIKE?
+
+Based on these very reasonable variables we start to see a story of a person of any income level, homeowner or not, who has low to no recent credit inquiries or delinquencies that has alot of debt and credit card debt that needs to be serviced better. Thats why they came to Lending Club to get help bridge the gap of their income versus the payments needed to stay afloat.
+
+Upon a more detailed look based on the model that seems to explain the most of the bad loans, the culprit seems to be healthy, 5-20 open credit accounts, has a relatively low revolving balance, with loans that are 36 months.
+
+Looking at the data and letting it guide me leads me to either say, either the profiles are actually healthy but face circumstancial reasons beyond their control that leads them
+
+OR
+
+Profile can be lying. either overreporting the good things like employment length, or under reporting bad things like credit inquiries or delinquencies
+
+**IS THIS IT? Innocent unlucky people or liars are our profile?**
+
+**I believe these are 2 good areas to start with and may be a mix of both.**
+
+However upon actually building models much of the data competes with each other over explaining and not explaining things. They tended to pull the direction in different ways.
+
+Each type of variable were significant in of themselves but overall didnt help much. 
+
+There were a few major ways I tried to attack the data
+
+1) Throw everything into the blender and see what happens method (Hoping to get lucky!)
+
+Result: Garbage, the resulting model did worse than assuming all loans were successful
+
+
+2) Group up items that seemed to work together like income and employment length or inquiries and delinquecies
+
+Result: Slightly better but very slight, predicted better by < 1%
+
+
+3)(Let the data guide me method)
+Started over and threw away all preconceived notions of what may be significant and followed variables that were more significant than others according to the data.
+
+Result:  Humbling Experience. Variables that seemed important were not important
+
+
+End result found a model that beat baseline by over 10%
+
+*METHODOLOGY:*
+
+I took all of the loan status that were fully paid off and set this as a new feature field called bad_loans and set these at "0", then took all of the defaulted or charged off status loans as "bad loans" and set these to "1".
+
+```{r LC}
+suppressWarnings(suppressMessages(library(ggplot2)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(tidyr)))
+LC <- read.csv("LoanStats3d_securev1.csv")
+
+ LC[c("bad_loans")] = as.integer(0)
+
+ #Consolidate variables to speed up the data crunching
+ 
+ LC_revised <- LC %>% select(loan_amnt, term, int_rate, installment, grade, sub_grade, emp_length, home_ownership, annual_inc, issue_d, loan_status, purpose, zip_code, addr_state, dti, delinq_2yrs, fico_range_low, fico_range_high, inq_last_6mths, total_pymnt, total_rec_prncp, total_rec_int, bad_loans, open_acc, pub_rec, revol_bal, revol_util, total_acc, collections_12_mths_ex_med, all_util, tot_hi_cred_lim)
+
+ LC_filtered <- filter(LC_revised, loan_status == "Default" | loan_status == "Fully Paid" | loan_status == "Charged off")
+
+ default <- LC$loan_status == "Default"
+ charged_off <- LC$loan_status == "Charged Off"
+ 
+ LC$bad_loans[default] = as.integer(1)
+ LC$bad_loans[charged_off] = as.integer(1)
+```
+
+Took the subset data of only good loans and bad loans and split them into a training set and a testing set
+
+```{r split test and training set} 
+library(caTools)
+set.seed(0) 
+split = sample.split(LC_filtered$bad_loans, SplitRatio = 0.75)
+LC_filtered_Train <- subset(LC_filtered, split == TRUE)
+LC_filtered_Test <- subset(LC_filtered, split == FALSE)
+```
+
+Then Used a GLM Logistical model that predicts between 2 choices bad loans or a "1" flag or a good loans or a "0" flag. I used this as there were only 2 states I cared about, good loans and bad loans, which made this version ideal to use.
+
+I didn't use a regression as there wasn't a range of points to plot and draw a best fitting line to get a model. It was a very binary choice
+
+I could have potentially used a Kmeans methodology to try to extract profile types that can be grouped but given the dataset is already so rich , the lower hanging fruit is to try to see what value can the existing data can be used without trying to extract new features. However this can be a good next step to expand to once we have a base model to predict bad loans. So currently it is more pragmatic to use what we have first and try to minimize the manpower and resources to get a more accurate model which may or may not bring back ROI.
+
+Here were a few I tried that seemed good:
+
+```{r models}
+#LC_filtered_log = glm(bad_loans ~ delinq_2yrs + inq_last_6mths, data = #LC_filtered_Train, family = binomial) 
+#
+# AIC: 51985
+#
+#LC_filtered_log2 = glm(bad_loans ~ emp_length + delinq_2yrs + inq_last_6mths, data = #LC_filtered_Train, family = binomial)
+#
+#LC_filtered_log3 = glm(bad_loans ~ purpose + emp_length + delinq_2yrs + #inq_last_6mths, data = LC_filtered_Train, family = binomial)
+#
+#LC_filtered_log4 = glm(bad_loans ~ addr_state + purpose + emp_length + delinq_2yrs + #inq_last_6mths, data = LC_filtered_Train, family = binomial)
+#
+#LC_filtered_log5 = glm(bad_loans ~ fico_range_low + addr_state + purpose + emp_length #+ delinq_2yrs + inq_last_6mths, data = LC_filtered_Train, family = binomial)
+```
+
+I easily spent 40-80 hours looking at many models to find dead ends. Most of the models were dead ends. However with each iteration, slowly found some variables that played nice with each other!
+
+Went through and tried to find variables that affected the AIC the most with significant variables. Also tried to make sure the direction of the data was in the same sign and direction and not competing against each other.
+
+I went through several models to try to find the correct version
+
+ LC_filtered_log9
+
+With the model that works that seemed to minimize the errors and explain the data the most, went to try to train and test the data to ensure its predictability.
+
+
+
+So using the confusion Matrix to try to evaluate the accuracy of the training set vs what it actually was.
+```{r confusion matrix training set}
+suppressWarnings(suppressMessages(library(ggplot2)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(tidyr)))
+suppressWarnings(suppressMessages(library(lubridate)))
+suppressWarnings(suppressMessages(library(caTools)))
+suppressWarnings(suppressMessages(library(ROCR)))
+suppressWarnings(suppressMessages(library(pROC)))
+
+#predict_train9 <- predict(LC_filtered_log9, type = "response")
+#table(LC_filtered_Train$bad_loans, predict_train9 > 0.5)
+ 
+# FALSE  TRUE
+# 0 40238  1691
+# 1  2375  8023
+ 
+# (40238+8023)/(40238+1691+2375+8023)=.9222 accuracy
+# (40238+1691)/ (40238+1691+2375+8023)
+# [1] 0.8012881 (Baseline accuracy)
+
+# table(LC_filtered_Train$bad_loans, predict_train9 > 0.4)
+ 
+# FALSE  TRUE
+# 0 39499  2430
+# 1  1804  8594
+ 
+# (39499+8594)/(39499+2430+1804+8594) =.919
+# table(LC_filtered_Train$bad_loans, predict_train9 > 0.3)
+ 
+# FALSE  TRUE
+# 0 38525  3404
+# 1  1343  9055
+ 
+# (39525+9055)/(38525+3404+1343+9055)= .928 accuracy
+#  table(LC_filtered_Train$bad_loans, predict_train9 > 0.2)
+ 
+# FALSE  TRUE
+# 0 37045  4884
+# 1   909  9489
+ 
+# (37045+9489)/(37045+4884+909+9489)- .889 accuracy
+ 
+# table(LC_filtered_Train$bad_loans, predict_train9 > 0.1)
+ 
+# FALSE  TRUE
+# 0 34020  7909
+# 1   526  9872
+ 
+# (34020+9872)/(34020+7909+526+9872) = .838 accurracy
+# (34020+7909)/(34020+7909+526+9872) = .80 dominant bias
+```  
+ 
+Keep in mind the dominant bias of the data is about 80%~ good loans so our accuracy needs to be more accurate than 80% to beat the baseline of assume all loans are good and getting 80% of the loans correct.
+
+We have a gain improvement of little over 11% but is the threshold of 0.5 sufficient? 
+
+
+*WAY TO PICK A THRESHOLD*
+
+
+There are multiple ways to look at it but goal is to make the most money or predict as many bad loans so Lending Club can charge fees to borrowers and the Lenders can feel safer knowing the money they invest to loan will earn a return with minimal losses.
+
+That is if the goal is to increase trust is to eliminate as many potential bad loans at the expense of good loans.
+
+However once confidence is back, can allow the standards to be more lax to grow revenue for LC.
+
+```{r profitability} 
+# good_loans_data <- filter(LC_filtered, loan_status == "Fully Paid")
+# bad_loans_data <- filter(LC_filtered, bad_loans == "1")
+# nrow(bad_loans_data)
+#[1] 13864
+# 
+# good_loans_data <- filter(LC_filtered, bad_loans == "0")
+# nrow(good_loans_data)
+#[1] 55905
+# 
+# average_good_loan_prof <- (sum(good_loans_data$total_pymnt) - sum(good_loans_data$loan_amnt))/nrow(good_loans_data)
+# 
+# average_good_loan_prof
+#[1] 1100.512
+# 
+# average_bad_loan_prof <- (sum(bad_loans_data$total_pymnt)- sum(bad_loans_data$loan_amnt))/nrow(bad_loans_data)
+#  
+# average_bad_loan_prof
+#[1] -11907.74
+#
+# -11907.74/1100.512
+#[1] -10.82018
+``` 
+
+so seems on an aggregate bad loans can impact your profitability by almost 11x  
+i would argue you need to make sure need to pick 12 good loans for every 1 bad to break even on principal. Thats not counting the opportunity cost lost and any time/efforts lost
+
+I would suggest a between .2 to .3 threshold range to maximize the # of bad loans found without taking out too many productive loans by flagging them bad incorrectly.
+
+```{r confusion matrix test data}
+#predict_test9 <- predict(LC_filtered_log9, type = "response", newdata = LC_filtered_Test)
+#
+#table(LC_filtered_Test$bad_loans, predict_test9 > 0.4)
+#   
+#    FALSE  TRUE
+#  0 13195   781
+#  1   561  2905
+#
+#  (2905+13195)/(13195+781+561+2905) = .923 accuracy
+#
+#table(LC_filtered_Test$bad_loans, predict_test9 > 0.3)
+#   FALSE  TRUE
+#  0 12866  1110
+#  1   420  3046
+#  
+#  (3046+12866)/(12866+1110+420+3046) = .912 accuracy
+#  (12866+1110)/(12866+1110+420+3046) = .80 dominant bias
+#  
+#table(LC_filtered_Test$bad_loans, predict_test9 > 0.2)
+#   
+#    FALSE  TRUE
+#  0 12353  1623
+#  1   295  3171
+#  (12353+3171)/(12353+1623+295+3171) = .890 accuracy
+```
+  So in the end a 0.3 Threshold was chosen and ran against the test set to ensure the same model predicts with new data and it does!
+  
+11% better than the baseline  
+
+*EVALUATION/IMPLICATIONS*
+
+Originally I was looking for people that looked unhealthy that eventually defaulted, looking for credit inquiries, delinquencies, low income, low employment lengths and long term loans with high interest rates
+
+Instead it seems the type that defaults may be employed for a long time, fairly healthy, relatively low revolving balances, relatively low open accounts with low to no credit inquires.
+
+Why may this be?
+
+It seems very much the opposite of the type that may default as if you're looking for a person that may commit a crime, you may check for tattoes, previous jail time or arrests.
+
+Seems counterintuitive especially when I looked at it.
+
+Here are some ideas that may play a role:
+
+The people who default or have a charge off were intending to pay back in full and have the background that says they have no problem to do so. But why default if that is the case?
+
+1) External circumstances out of their control like getting sick suddenly.
+
+2) Hiding the fact they are not okay by under-reporting or the reporting data has a delay
+
+3) Complacency as it seems obvious the debt/credit card debt will get paid eventually with the new Lending Club consolidated Loan
+
+*SUGGESTIONS/RECOMMENDATIONS FOR LENDING CLUB:*
+
+1) since total payments seems to explain why loans go bad, may check for a longer history of on time payments to judge a "safe" grade A or B loan or give a higher risk without verifiable on time payment histories.
+
+2)There seems to be a sense of complacency based on the data that may make what seems to be an a low risk profile be a hidden higher risk. I'd try to offer small discounts to accelerate payments who pay early instead of last minute.
+
+3)Other miscellaneous External Circumstancial risks. This may be the product of the current low interest environment or related Macroeconomic factors. There should be a survey done to find out why the current ones to find out the circumstances on how the charge off happens, whether it was controllable risk or not.
+
+4) Motives on liars would be a good study to make long term
+
+Overall I feel the model to identify bad loans should biased to eliminating bad loans in the short term to win back confidence of the public as tweaks are made to close the hidden risks that were graded too generously safe.
+```{r lift curve , echo=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(caTools)
+library(ROCR)
+library(pROC)
+library(knitr)
+
+#ROCRpred9 <- prediction(predict_train9, LC_filtered_Train$bad_loans)
+#ROCRperf9 <- performance(ROCRpred9,"tpr", "fpr")
+#plot(ROCRperf9, main = "lift curve", colorize=T)
+```
+ 
+
+APPENDIX
+
+
+--Here were somee approaches that were tested but didnt seem to have desired effects
+
+--Kmeans to strenghen the signal for Purpose
+
+--Looking at the financial data that many typically may think will work
+
+--Using too many variables
+
+Variables I thought were important:
+
+*income
+*employment length
+*Purpose of the loan
+*Delinquencies
+*Inquiries
+
+Variables that are actually important:
+
+*Total Payments
+*Accounts Open
+*Grade
+*collections on medical
+*revolving Balance
+
+Based on the variables that were actually important in predicting bad loans, it seems the variables that were important were variables that hint of how consistency seems to be the main reason why people pay it off successfully. For the ones that don't seem to hint of things that were beyond their control like collections medical debt or # of accounts or revolving balance that hint some external factor overwhelmed them.
+
+
+WAYS TO IMPROVE THE MODEL:
+
+Seems once you know payments made or total payments made, next most reasonable way to improve the model is to create a linear regression based on payments to improve this aspect.
